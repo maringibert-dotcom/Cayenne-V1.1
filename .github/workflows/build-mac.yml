@@ -1,0 +1,41 @@
+name: Build CAYENNE Mac
+on:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trouver le projet (racine ou sous-dossier)
+        run: |
+          CM=$(find . -name CMakeLists.txt -not -path "*/build/*" -not -path "*/_deps/*" | head -1)
+          if [ -z "$CM" ]; then echo "CMakeLists.txt introuvable"; exit 1; fi
+          echo "PROJ=$(dirname "$CM")" >> "$GITHUB_ENV"
+
+      - name: Configuration
+        run: cmake -S "$PROJ" -B "$PROJ/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+
+      - name: Compilation VST3 + AU
+        run: |
+          cmake --build "$PROJ/build" --config Release --target CAYENNE_VST3 -j 4
+          cmake --build "$PROJ/build" --config Release --target CAYENNE_AU -j 4
+
+      - name: Signature locale et archive (garde les droits d'execution)
+        run: |
+          mkdir -p dist
+          for p in $(find "$PROJ/build/CAYENNE_artefacts" -maxdepth 3 \( -name "*.vst3" -o -name "*.component" \)); do
+            codesign --force --deep --sign - "$p"
+            cp -R "$p" dist/
+          done
+          (cd dist && tar -czf ../CAYENNE-macOS.tar.gz .)
+          ls -la dist
+
+      - name: Artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAYENNE-macOS
+          path: CAYENNE-macOS.tar.gz
+          if-no-files-found: error
