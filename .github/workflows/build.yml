@@ -1,0 +1,57 @@
+name: Build CAYENNE
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: Windows, extra: "" }
+          - { os: macos-15,       name: macOS,   extra: '-DCMAKE_OSX_ARCHITECTURES=arm64\;x86_64' }
+          - { os: ubuntu-latest,  name: Linux,   extra: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependances Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev
+
+      - name: Trouver le projet (racine ou sous-dossier)
+        shell: bash
+        run: |
+          CM=$(find . -name CMakeLists.txt -not -path "*/build/*" -not -path "*/_deps/*" | head -1)
+          if [ -z "$CM" ]; then echo "CMakeLists.txt introuvable : le projet n'a pas ete envoye sur GitHub"; exit 1; fi
+          echo "PROJ=$(dirname "$CM")" >> "$GITHUB_ENV"
+          echo "Projet trouve dans : $(dirname "$CM")"
+
+      - name: Configuration
+        shell: bash
+        run: cmake -S "$PROJ" -B "$PROJ/build" -DCMAKE_BUILD_TYPE=Release ${{ matrix.extra }}
+
+      - name: Compilation VST3 + Standalone (+ AU sur macOS)
+        shell: bash
+        run: |
+          cmake --build "$PROJ/build" --config Release --target CAYENNE_VST3 -j 4
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            cmake --build "$PROJ/build" --config Release --target CAYENNE_AU -j 4
+          else
+            cmake --build "$PROJ/build" --config Release --target CAYENNE_Standalone -j 4
+          fi
+
+      - name: Artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAYENNE-${{ matrix.name }}
+          path: |
+            **/build/CAYENNE_artefacts/**/VST3
+            **/build/CAYENNE_artefacts/**/AU
+            **/build/CAYENNE_artefacts/**/Standalone
+          if-no-files-found: error
